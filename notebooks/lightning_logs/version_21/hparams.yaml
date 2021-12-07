@@ -1,0 +1,5 @@
+enc_out_dim: 128
+hidden_dims:
+- 256
+input_dim: 800
+latent_dim: 32
