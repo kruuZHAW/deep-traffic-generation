@@ -4,6 +4,7 @@
 *.npy
 *.ckpt
 *.csv
+*.tar.gz
 # lightning_logs/
 # VsCode settings
 .vscode
