@@ -515,6 +515,38 @@ class VAE(AE):
         log_q = q.log_prob(z)
         return log_p - log_q
 
+    # The 2 terms here are part of the other formulation of the loss
+    # present in Diagnosing and Enhancing VAE Models
+
+    def gen_loss(
+        self, x: torch.Tensor, x_hat: torch.Tensor, gamma: torch.Tensor
+    ):
+        """Computes generation loss in TwoStages VAE Model
+        Args :
+            x : input data
+            x_hat : reconstructed data
+            gamma : decoder std (scalar as every distribution in the decoder has the same std)
+
+        To use it within the learning : take the sum and divide by the batch size
+        """
+        HALF_LOG_TWO_PI = 0.91893
+
+        loggamma = torch.log(gamma)
+        return (
+            torch.square((x - x_hat) / gamma) / 2.0 + loggamma + HALF_LOG_TWO_PI
+        )
+
+    def kl_loss(self, mu: torch.Tensor, std: torch.Tensor):
+        """Computes close form of KL for gaussian distributions
+        Args :
+            mu : encoder means
+            std : encoder stds
+
+        To use it within the learning : take the sum and divide by the batch size
+        """
+        logstd = torch.log(std)
+        return (torch.square(mu) + torch.square(std) - 2 * logstd - 1) / 2.0
+
     @classmethod
     def add_model_specific_args(
         cls, parent_parser: ArgumentParser
