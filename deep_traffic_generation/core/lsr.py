@@ -59,8 +59,9 @@ class CustomMSF(MixtureSameFamily):
 class NormalLSR(LSR):
     """DEPRECATED: use GaussianMixtureLSR with 1 component."""
 
+    # def __init__(self, input_dim: int, out_dim: int, fix_prior: bool = True):
     def __init__(self, input_dim: int, out_dim: int, fix_prior: bool = True):
-        super().__init__()
+        super().__init__(input_dim, out_dim, fix_prior)
 
         self.z_loc = nn.Linear(input_dim, out_dim)
         self.z_log_var = nn.Linear(input_dim, out_dim)
@@ -184,6 +185,11 @@ class GaussianMixtureLSR(LSR):
             dim=1,
         )
         w = self.z_weights(hidden)
+
+        # ok = Categorical.arg_constraints["logits"].check(w)
+        # bad_elements = w[~ok]
+        # print(bad_elements)
+
         scales = (log_vars / 2).exp()
 
         return self.dist(

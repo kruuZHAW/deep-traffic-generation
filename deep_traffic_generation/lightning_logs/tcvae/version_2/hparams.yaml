@@ -5,13 +5,13 @@ amp_level: O2
 auto_lr_find: false
 auto_scale_batch_size: false
 auto_select_gpus: false
-batch_size: 512
+batch_size: 200
 benchmark: false
 check_val_every_n_epoch: 1
 checkpoint_callback: true
 data_path: !!python/object/apply:pathlib.PosixPath
 - data
-- traffic_50_162-216_noga_tilFAF.pkl
+- traffic_noga_tilFAF.pkl
 default_root_dir: null
 deterministic: false
 devices: null
@@ -19,11 +19,11 @@ dilation_base: 2
 distributed_backend: null
 dropout: 0.0
 early_stop: null
-encoding_dim: 32
+encoding_dim: 64
 fast_dev_run: false
 features:
-- latitude
-- longitude
+- track
+- groundspeed
 - altitude
 - timedelta
 fix_prior: true

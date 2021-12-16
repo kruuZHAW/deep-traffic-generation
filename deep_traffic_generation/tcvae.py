@@ -8,7 +8,7 @@ from torch.nn import functional as F
 
 from deep_traffic_generation.core import TCN, VAE, cli_main
 from deep_traffic_generation.core.datasets import DatasetParams, TrafficDataset
-from deep_traffic_generation.core.lsr import GaussianMixtureLSR
+from deep_traffic_generation.core.lsr import GaussianMixtureLSR, NormalLSR, MultivariateNormalLSR
 
 
 # fmt: on
@@ -119,6 +119,12 @@ longitude --info_index -1
             n_components=self.hparams.n_components,
             fix_prior=self.hparams.fix_prior,
         )
+
+        # self.lsr = NormalLSR(
+        #     input_dim=h_dim,
+        #     out_dim=self.hparams.encoding_dim,
+        #     fix_prior=self.hparams.fix_prior,
+        # )
 
         self.decoder = TCDecoder(
             input_dim=self.hparams.encoding_dim,
