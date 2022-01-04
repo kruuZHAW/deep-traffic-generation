@@ -27,6 +27,7 @@ class FCN(nn.Module):
         out_dim: int,
         h_dims: List[int],
         h_activ: Optional[nn.Module] = None,
+        batch_norm: bool = True,
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
@@ -41,6 +42,12 @@ class FCN(nn.Module):
                 out_features=layer_dims[index + 1],
             )
             layers.append(layer)
+
+            if (index != self.n_layers - 1) and batch_norm:
+                layers.append(
+                    nn.BatchNorm1d(num_features=layer_dims[index + 1])
+                )
+
             if (index != self.n_layers - 1) and h_activ is not None:
                 layers.append(h_activ)
 

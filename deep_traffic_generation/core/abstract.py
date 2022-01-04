@@ -428,7 +428,15 @@ class VAE(AE):
             - \\beta \\times \\sum_{i=0}^{N} log(p(x_{i}|z_{i}))
         """
         x, _ = batch
+        batch_size = x.shape[0]
         dist_params, z, x_hat = self.forward(x)
+
+        # std of decoder distribution (init at 1)
+        self.scale = nn.Parameter(
+            torch.Tensor([torch.sqrt(F.mse_loss(x, x_hat))]),
+            requires_grad=False,
+        )
+        gamma = self.scale
 
         # log likelihood loss (reconstruction loss)
         llv_loss = -self.gaussian_likelihood(x, x_hat)
@@ -440,16 +448,26 @@ class VAE(AE):
         kld_loss = self.kl_divergence(z, q_zx, p_z)
         kld_coef = self.hparams.kld_coef
 
+        # ELBO loss from Diagnosing and Enhancing VAE Models
+        # Values are very close, but we can have access to the gamma parameter
+        kl = (
+            torch.sum(self.kl_loss(dist_params[1], dist_params[2])) / batch_size
+        )
+        gen = torch.sum(self.gen_loss(x, x_hat, gamma)) / batch_size
+        elbo = kl + gen
+
         # elbo with beta hyperparameter:
         #   Higher values enforce orthogonality between latent representation.
-        elbo = kld_coef * kld_loss + llv_coef * llv_loss
-        elbo = elbo.mean()
+        # elbo = kld_coef * kld_loss + llv_coef * llv_loss
+        # elbo = elbo.mean()
 
         self.log_dict(
             {
                 "train_loss": elbo,
-                "kl_loss": kld_loss.mean(),
-                "recon_loss": llv_loss.mean(),
+                # "kl_loss": kld_loss.mean(),
+                # "recon_loss": llv_loss.mean(),
+                "kl_loss": kl,
+                "recon_loss": gen,
             }
         )
         return elbo
