@@ -1,5 +1,7 @@
 # fmt: off
 from argparse import ArgumentParser, Namespace, _ArgumentGroup
+from base64 import decode
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -8,7 +10,7 @@ from torch.nn import functional as F
 
 from deep_traffic_generation.core import TCN, VAE, cli_main
 from deep_traffic_generation.core.datasets import DatasetParams, TrafficDataset
-from deep_traffic_generation.core.lsr import GaussianMixtureLSR, NormalLSR, MultivariateNormalLSR
+from deep_traffic_generation.core.lsr import GaussianMixtureLSR, VampPriorLSR, NormalLSR, ExemplarLSR
 
 
 # fmt: on
@@ -104,6 +106,8 @@ longitude --info_index -1
                 kernel_size=self.hparams.kernel_size,
                 dilation_base=self.hparams.dilation_base,
                 dropout=self.hparams.dropout,
+                h_activ=nn.ReLU(),
+                # h_activ=None,
             ),
             nn.AvgPool1d(self.hparams.sampling_factor),
             nn.Flatten(),
@@ -112,19 +116,50 @@ longitude --info_index -1
         h_dim = self.hparams.h_dims[-1] * (
             int(self.dataset_params["seq_len"] / self.hparams.sampling_factor)
         )
-        # Latent Space Regularization
-        self.lsr = GaussianMixtureLSR(
-            input_dim=h_dim,
-            out_dim=self.hparams.encoding_dim,
-            n_components=self.hparams.n_components,
-            fix_prior=self.hparams.fix_prior,
-        )
 
-        # self.lsr = NormalLSR(
-        #     input_dim=h_dim,
-        #     out_dim=self.hparams.encoding_dim,
-        #     fix_prior=self.hparams.fix_prior,
-        # )
+        if self.hparams.prior == "vampprior":
+            self.lsr = VampPriorLSR(
+                original_dim=self.dataset_params["input_dim"],
+                original_seq_len=self.dataset_params["seq_len"],
+                input_dim=h_dim,
+                out_dim=self.hparams.encoding_dim,
+                encoder=self.encoder,
+                n_components=self.hparams.n_components,
+            )
+
+        elif self.hparams.prior == "standard":
+            self.lsr = NormalLSR(
+                input_dim=h_dim,
+                out_dim=self.hparams.encoding_dim,
+            )
+
+        elif self.hparams.prior == "exemplar":
+            if self.hparams.exemplar_path is None:
+                raise Exception(
+                    "--exemplar_path have to be specified for --prior exemplar"
+                )
+
+            # load trajectories used for prior with the same parameters as the training dataset
+            # The scaler is the one trained on the training dataset
+            self.prior_trajs = TrafficDataset.from_file(
+                self.hparams.exemplar_path,
+                features=self.dataset_params["features"],
+                shape=self.dataset_params["shape"],
+                scaler=self.dataset_params["scaler"],
+                info_params=self.dataset_params["info_params"],
+            )
+
+            self.lsr = ExemplarLSR(
+                original_dim=self.dataset_params["input_dim"],
+                original_seq_len=self.dataset_params["seq_len"],
+                input_dim=h_dim,
+                out_dim=self.hparams.encoding_dim,
+                encoder=self.encoder,
+                prior_trajs=self.prior_trajs.data,
+            )
+
+        else:
+            raise Exception("Wrong name of the prior!")
 
         self.decoder = TCDecoder(
             input_dim=self.hparams.encoding_dim,
@@ -135,10 +170,13 @@ longitude --info_index -1
             dilation_base=self.hparams.dilation_base,
             sampling_factor=self.hparams.sampling_factor,
             dropout=self.hparams.dropout,
+            h_activ=nn.ReLU(),
+            # h_activ=None,
         )
 
-        # non-linear activations
+        # non-linear activation after decoder
         self.out_activ = nn.Identity()
+        # self.out_activ = nn.Tanh()
 
     def test_step(self, batch, batch_idx):
         x, info = batch
@@ -162,8 +200,10 @@ longitude --info_index -1
             * ``--dilation``: Dilation base. Default to :math:`2`.
             * ``--kernel``: Size of the kernel to use in Temporal Convolutional
               layers. Default to :math:`16`.
+            * ``--prior``: choice of the prior (standard or vampprior). Default to
+            "vampprior".
             * ``--n_components``: Number of components for the Gaussian Mixture
-              modelling the latent space. Default to :math:`1`.
+              modelling the prior. Default to :math:`300`.
             * ``--sampling_factor``: Sampling factor to reduce the sequence
               length after Temporal Convolutional layers. Default to
               :math:`10`.
@@ -199,7 +239,18 @@ longitude --info_index -1
             default=2,
         )
         parser.add_argument(
-            "--n_components", dest="n_components", type=int, default=1
+            "--n_components", dest="n_components", type=int, default=500
+        )
+
+        parser.add_argument(
+            "--prior",
+            dest="prior",
+            choices=["vampprior", "standard", "exemplar"],
+            default="vampprior",
+        )
+
+        parser.add_argument(
+            "--exemplar_path", dest="exemplar_path", type=Path, default=None
         )
 
         return parent_parser, parser

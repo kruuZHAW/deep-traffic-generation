@@ -10,6 +10,9 @@ from traffic.core import Traffic
 
 from .protocols import TransformerProtocol
 
+from sklearn.utils.validation import check_is_fitted
+from sklearn.exceptions import NotFittedError
+
 
 # fmt: on
 class Infos(TypedDict):
@@ -90,8 +93,14 @@ class TrafficDataset(Dataset):
 
         self.scaler = scaler
         if self.scaler is not None:
-            self.scaler = self.scaler.fit(data)
-            data = self.scaler.transform(data)
+            try:
+                # If scaler already fitted, only transform
+                check_is_fitted(self.scaler)
+                data = self.scaler.transform(data)
+            except NotFittedError:
+                # If not: fit and transform
+                self.scaler = self.scaler.fit(data)
+                data = self.scaler.transform(data)
 
         data = torch.FloatTensor(data)
 

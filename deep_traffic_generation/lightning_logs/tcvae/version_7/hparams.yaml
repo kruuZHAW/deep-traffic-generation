@@ -5,13 +5,13 @@ amp_level: O2
 auto_lr_find: false
 auto_scale_batch_size: false
 auto_select_gpus: false
-batch_size: 200
+batch_size: 500
 benchmark: false
 check_val_every_n_epoch: 1
 checkpoint_callback: true
 data_path: !!python/object/apply:pathlib.PosixPath
 - data
-- traffic_162-216_noga_tilFAF.pkl
+- traffic_noga_tilFAF_train_enriched.pkl
 default_root_dir: null
 deterministic: false
 devices: null
@@ -19,7 +19,8 @@ dilation_base: 2
 distributed_backend: null
 dropout: 0.0
 early_stop: null
-encoding_dim: 128
+encoding_dim: 150
+exemplar_path: null
 fast_dev_run: false
 features:
 - track
@@ -30,11 +31,11 @@ fix_prior: true
 flush_logs_every_n_steps: 100
 gpus: null
 gradient_clip_algorithm: norm
-gradient_clip_val: 0.0
+gradient_clip_val: 0.5
 h_dims:
 - 64
-- 32
-- 16
+- 64
+- 64
 info_features:
 - latitude
 - longitude
@@ -60,7 +61,7 @@ min_epochs: null
 min_steps: null
 move_metrics_to_cpu: false
 multiple_trainloader_mode: max_size_cycle
-n_components: 1
+n_components: 800
 network_name: tcvae
 num_nodes: 1
 num_processes: 1
@@ -69,9 +70,11 @@ overfit_batches: 0.0
 plugins: null
 precision: 32
 prepare_data_per_node: true
+prior: vampprior
 process_position: 0
 profiler: null
 progress_bar_refresh_rate: null
+reg_pseudo: false
 reload_dataloaders_every_epoch: false
 reload_dataloaders_every_n_epochs: 0
 replace_sampler_ddp: true

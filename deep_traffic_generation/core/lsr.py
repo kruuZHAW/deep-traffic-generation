@@ -1,4 +1,5 @@
 # fmt: off
+from tkinter import Variable
 from typing import List, Tuple
 
 import torch
@@ -10,6 +11,8 @@ from torch.distributions import (
 from torch.distributions.categorical import Categorical
 
 from deep_traffic_generation.core.abstract import LSR
+
+from deep_traffic_generation.core.datasets import TrafficDataset
 
 
 # fmt:on
@@ -57,11 +60,10 @@ class CustomMSF(MixtureSameFamily):
 
 
 class NormalLSR(LSR):
-    """DEPRECATED: use GaussianMixtureLSR with 1 component."""
 
     # def __init__(self, input_dim: int, out_dim: int, fix_prior: bool = True):
-    def __init__(self, input_dim: int, out_dim: int, fix_prior: bool = True):
-        super().__init__(input_dim, out_dim, fix_prior)
+    def __init__(self, input_dim: int, out_dim: int):
+        super().__init__(input_dim, out_dim)
 
         self.z_loc = nn.Linear(input_dim, out_dim)
         self.z_log_var = nn.Linear(input_dim, out_dim)
@@ -70,10 +72,10 @@ class NormalLSR(LSR):
         self.dist = Normal
 
         self.prior_loc = nn.Parameter(
-            torch.zeros((1, out_dim)), requires_grad=not fix_prior
+            torch.zeros((1, out_dim)), requires_grad=False
         )
         self.prior_log_var = nn.Parameter(
-            torch.zeros((1, out_dim)), requires_grad=not fix_prior
+            torch.zeros((1, out_dim)), requires_grad=False
         )
         self.register_parameter("prior_loc", self.prior_loc)
         self.register_parameter("prior_log_var", self.prior_log_var)
@@ -81,141 +83,242 @@ class NormalLSR(LSR):
     def forward(self, hidden) -> Distribution:
         loc = self.z_loc(hidden)
         log_var = self.z_log_var(hidden)
-        return self.dist(loc, (log_var / 2).exp())
+        return Independent(self.dist(loc, (log_var / 2).exp()), 1)
 
-    def dist_params(self, p: Normal) -> List[torch.Tensor]:
-        return [p.loc, p.scale]
+    def dist_params(self, p: Independent) -> List[torch.Tensor]:
+        return [p.base_dist.loc, p.base_dist.scale]
 
-    def get_posterior(self, dist_params: List[torch.Tensor]) -> Normal:
-        return self.dist(dist_params[0], dist_params[1])
+    def get_posterior(self, dist_params: List[torch.Tensor]) -> Independent:
+        return Independent(self.dist(dist_params[0], dist_params[1]), 1)
 
-    def get_prior(self, batch_size) -> Normal:
-        return self.dist(
-            self.prior_loc.expand(batch_size, -1),
-            (self.prior_log_var.expand(batch_size, -1) / 2).exp(),
+    def get_prior(self) -> Independent:
+        return Independent(
+            self.dist(self.prior_loc, (self.prior_log_var / 2).exp()), 1
         )
 
 
-class GaussianMixtureLSR(LSR):
-    """Gaussian Mixture Latent Space Regularization.
-
-    .. note::
-        It uses a distribution class built on top of MixtureSameFamily to add
-        a rsample() method.
-
-        .. autoclass:: deep_traffic_generation.core.lsr.CustomMSF
-            :members: rsample
+class VampPriorLSR(LSR):
+    """VampPrior Latent Space Regularization. https://arxiv.org/pdf/1705.07120.pdf
 
     Args:
-        input_dim (int): size of each input sample.
-        out_dim (int):size of each output sample.
+        original_dim(int): number of features for each trajectory (usually 4)
+        original_seq_len(int): sequence length of one trajectory (usually 200)
+        input_dim (int): size of each input sample after the encoder NN
+        out_dim (int):size of each output sample, dimension of the latent distributions
+        encoder (nn.Module) : Neural net used for the encoder
         n_components (int, optional): Number of components in the Gaussian
-            Mixture. Defaults to ``1``.
-        fix_prior (bool, optional): Whether to optimize the prior distribution.
-            Defaults to ``True``.
+            Mixture of the VampPrior. Defaults to ``500``.
     """
 
     def __init__(
         self,
+        original_dim: int,
+        original_seq_len: int,
         input_dim: int,
         out_dim: int,
-        n_components: int = 1,
-        fix_prior: bool = True,
+        encoder: nn.Module,
+        n_components: int,
     ):
-        super().__init__(input_dim, out_dim, fix_prior)
+        super().__init__(input_dim, out_dim)
 
+        self.original_dim = original_dim
+        self.seq_len = original_seq_len
+        self.encoder = encoder
         self.n_components = n_components
 
-        self.dist = CustomMSF
+        # We don't use customMSF here because we don't need to chose one component of the prior when sampling
+        self.dist = MixtureSameFamily
         self.comp = Normal
         self.mix = Categorical
 
-        # neural networks layers
-        self.z_locs = nn.ModuleList(
-            [nn.Linear(input_dim, out_dim) for _ in range(n_components)]
-        )
-        self.z_log_vars = nn.ModuleList(
-            [nn.Linear(input_dim, out_dim) for _ in range(n_components)]
-        )
-        self.z_weights = nn.Linear(input_dim, n_components)
+        # Posterior Parameters -> those need to be only gaussian in the paper
+        z_loc_layers = []
+        z_loc_layers.append(nn.Linear(input_dim, out_dim))
+        self.z_loc = nn.Sequential(*z_loc_layers)
+
+        z_log_var_layers = []
+        z_log_var_layers.append(nn.Linear(input_dim, out_dim))
+        z_log_var_layers.append(nn.Hardtanh(min_val=-6.0, max_val=2.0))
+        self.z_log_var = nn.Sequential(*z_log_var_layers)
 
         # prior parameters
+        # Input to the NN that will produce the pseudo inputs
+        self.idle_input = torch.autograd.Variable(
+            torch.eye(n_components, n_components), requires_grad=False
+        )
+
+        # NN that transform the idle_inputs into the pseudo_inputs that will be transformed
+        # by the encoder into the means of the VampPrior
+        pseudo_inputs_layers = []
+        pseudo_inputs_layers.append(nn.Linear(n_components, n_components))
+        pseudo_inputs_layers.append(nn.ReLU())
+        pseudo_inputs_layers.append(
+            nn.Linear(
+                n_components,
+                (original_dim * original_seq_len),
+            )
+        )
+        pseudo_inputs_layers.append(nn.Hardtanh(min_val=-1.0, max_val=1.0))
+        self.pseudo_inputs_NN = nn.Sequential(*pseudo_inputs_layers)
+
+        # decouple variances of posterior and prior componenents
+        prior_log_var_layers = []
+        prior_log_var_layers.append(nn.Linear(input_dim, out_dim))
+        prior_log_var_layers.append(nn.Hardtanh(min_val=-6.0, max_val=2.0))
+        self.prior_log_var_NN = nn.Sequential(*z_log_var_layers)
+
+        # In Vamprior, the weights of the GM are all equal
+        # Here they are trained
         self.prior_weights = nn.Parameter(
-            torch.ones((1, n_components)), requires_grad=not fix_prior
+            torch.ones((1, n_components)), requires_grad=True
         )
-        means = torch.linspace(-1, 1, steps=n_components + 2)[1:-1].unsqueeze(
-            -1
-        )
-        self.prior_locs = nn.Parameter(
-            means * torch.zeros((1, n_components, out_dim)),
-            requires_grad=not fix_prior,
-        )
-        # fmt: off
-        self.prior_log_vars = nn.Parameter(
-            torch.zeros((1, n_components, out_dim)),
-            requires_grad=not fix_prior
-        )
-        # fmt: on
 
         self.register_parameter("prior_weights", self.prior_weights)
-        self.register_parameter("prior_locs", self.prior_locs)
-        self.register_parameter("prior_log_vars", self.prior_log_vars)
 
     def forward(self, hidden: torch.Tensor) -> Distribution:
         """[summary]
 
         Args:
-            hidden (torch.Tensor): [description]
+            hidden (torch.Tensor): output of encoder
 
         Returns:
-            Distribution: [description]
+            Distribution: corresponding posterior distribution
         """
-        locs = torch.cat(
-            [
-                self.z_locs[n](hidden).unsqueeze(1)
-                for n in range(self.n_components)
-            ],
-            dim=1,
-        )
-        log_vars = torch.cat(
-            [
-                self.z_log_vars[n](hidden).unsqueeze(1)
-                for n in range(self.n_components)
-            ],
-            dim=1,
-        )
-        w = self.z_weights(hidden)
 
-        # ok = Categorical.arg_constraints["logits"].check(w)
-        # bad_elements = w[~ok]
-        # print(bad_elements)
+        # Calculate the posterior parameters :
+        loc = self.z_loc(hidden)
+        log_var = self.z_log_var(hidden)
+        scales = (log_var / 2).exp()
 
-        scales = (log_vars / 2).exp()
+        # calculate the prior paramters :
+        X = self.pseudo_inputs_NN(self.idle_input)
+        X = X.view((X.shape[0], self.original_dim, self.seq_len))
+        pseudo_h = self.encoder(X)
+        self.prior_means = self.z_loc(pseudo_h)
+        # self.prior_log_vars = self.z_log_var(pseudo_h)
+        self.prior_log_vars = self.prior_log_var_NN(pseudo_h)
 
-        return self.dist(
-            self.mix(logits=w), Independent(self.comp(locs, scales), 1)
-        )
+        # return the posterior : a single multivariate normal
+        return Independent(self.comp(loc, scales), 1)
 
+    # Only for the posterior distribution
     def dist_params(self, p: MixtureSameFamily) -> Tuple:
-        return (
-            p.mixture_distribution.logits,
-            p.component_distribution.base_dist.loc,
-            p.component_distribution.base_dist.scale,
-        )
+        return [p.base_dist.loc, p.base_dist.scale]
 
-    def get_posterior(self, dist_params: Tuple) -> MixtureSameFamily:
-        return self.dist(
-            self.mix(logits=dist_params[0]),
-            Independent(self.comp(dist_params[1], dist_params[2]), 1),
-        )
+    # Is a signle multivariate normal
+    def get_posterior(self, dist_params: Tuple) -> Distribution:
+        return Independent(self.comp(dist_params[0], dist_params[1]), 1)
 
-    def get_prior(self, batch_size: int) -> MixtureSameFamily:
+    def get_prior(self) -> MixtureSameFamily:
         return self.dist(
-            self.mix(logits=self.prior_weights.expand(batch_size, -1)),
+            self.mix(logits=self.prior_weights.view(self.n_components)),
             Independent(
                 self.comp(
-                    self.prior_locs.expand(batch_size, -1, -1),
-                    (self.prior_log_vars.expand(batch_size, -1, -1) / 2).exp(),
+                    self.prior_means,
+                    (self.prior_log_vars / 2).exp(),
+                ),
+                1,
+            ),
+        )
+
+
+class ExemplarLSR(LSR):
+    """VampPrior Latent Space Regularization but with real trajectories
+    instead of pseudo-inputs. Inspired from https://arxiv.org/pdf/2004.04795.pdf
+
+    Args:
+        original_dim(int): number of features for each trajectory (usually 4)
+        original_seq_len(int): sequence length of one trajectory (usually 200)
+        input_dim (int): size of each input sample after the encoder NN
+        out_dim (int):size of each output sample, dimension of the latent distributions
+        encoder (nn.Module) : Neural net used for the encoder
+        prior_trajs : set of trajectories used for the prior components
+    """
+
+    def __init__(
+        self,
+        original_dim: int,
+        original_seq_len: int,
+        input_dim: int,
+        out_dim: int,
+        encoder: nn.Module,
+        prior_trajs,
+    ):
+        super().__init__(input_dim, out_dim)
+
+        self.original_dim = original_dim
+        self.seq_len = original_seq_len
+        self.encoder = encoder
+        self.prior_trajs = prior_trajs
+        self.n_components = prior_trajs.shape[0]
+
+        # We don't use customMSF here because we don't need to chose one component of the prior when sampling
+        self.dist = MixtureSameFamily
+        self.comp = Normal
+        self.mix = Categorical
+
+        # Posterior Parameters -> those need to be only gaussian in the paper
+        self.z_loc = nn.Linear(input_dim, out_dim)
+        z_log_var_layers = []
+        z_log_var_layers.append(nn.Linear(input_dim, out_dim))
+        z_log_var_layers.append(nn.Hardtanh(min_val=-6.0, max_val=2.0))
+        self.z_log_var = nn.Sequential(*z_log_var_layers)
+
+        # We train the weights of de GMM prior
+        self.prior_weights = nn.Parameter(
+            torch.ones((1, self.n_components)), requires_grad=True
+        )
+
+        # Each of the component of the prior have de same scale sigma*I
+        # self.log_prior_var = nn.Parameter(
+        #     torch.Tensor([1.0]), requires_grad=True
+        # )
+        # self.register_parameter("prior_weights", self.prior_weights)
+
+        # Prior Var implemented with NN
+        prior_log_var_layers = []
+        prior_log_var_layers.append(nn.Linear(input_dim, out_dim))
+        prior_log_var_layers.append(nn.Hardtanh(min_val=-6.0, max_val=2.0))
+        self.prior_log_var = nn.Sequential(*prior_log_var_layers)
+
+    def forward(self, hidden: torch.Tensor) -> Distribution:
+        """[summary]
+
+        Args:
+            hidden (torch.Tensor): output of encoder
+
+        Returns:
+            Distribution: corresponding posterior distribution
+        """
+
+        # Calculate the posterior parameters :
+        loc = self.z_loc(hidden)
+        log_var = self.z_log_var(hidden)
+        scales = (log_var / 2).exp()
+
+        # calculate the prior paramters :
+        pseudo_h = self.encoder(self.prior_trajs)
+        self.prior_means = self.z_loc(pseudo_h)
+        self.prior_vars = (self.prior_log_var(pseudo_h) / 2).exp()
+
+        # return the posterior : a single multivariate normal
+        return Independent(self.comp(loc, scales), 1)
+
+    # Only for the posterior distribution
+    def dist_params(self, p: MixtureSameFamily) -> Tuple:
+        return [p.base_dist.loc, p.base_dist.scale]
+
+    # Is a signle multivariate normal
+    def get_posterior(self, dist_params: Tuple) -> Distribution:
+        return Independent(self.comp(dist_params[0], dist_params[1]), 1)
+
+    def get_prior(self) -> MixtureSameFamily:
+        return self.dist(
+            self.mix(logits=self.prior_weights.view(self.n_components)),
+            Independent(
+                self.comp(
+                    self.prior_means,
+                    self.prior_vars,
                 ),
                 1,
             ),
@@ -223,6 +326,8 @@ class GaussianMixtureLSR(LSR):
 
 
 class MultivariateNormalLSR(LSR):
+    """DEPRECATED: done by NormalLSR"""
+
     def __init__(
         self,
         input_dim: int,
@@ -275,4 +380,130 @@ class MultivariateNormalLSR(LSR):
         return self.dist(
             self.prior_loc.expand(batch_size, -1),
             self.prior_cov.expand(batch_size, -1, -1),
+        )
+
+
+class GaussianMixtureLSR(LSR):
+    """DEPRECATED"""
+
+    """Gaussian Mixture Latent Space Regularization.
+
+    .. note::
+        It uses a distribution class built on top of MixtureSameFamily to add
+        a rsample() method.
+
+        .. autoclass:: deep_traffic_generation.core.lsr.CustomMSF
+            :members: rsample
+
+    Args:
+        input_dim (int): size of each input sample.
+        out_dim (int):size of each output sample.
+        n_components (int, optional): Number of components in the Gaussian
+            Mixture. Defaults to ``1``.
+        fix_prior (bool, optional): Whether to optimize the prior distribution.
+            Defaults to ``True``.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        out_dim: int,
+        n_components: int = 1,
+        fix_prior: bool = True,
+    ):
+        super().__init__(input_dim, out_dim, fix_prior)
+
+        self.n_components = n_components
+
+        self.dist = CustomMSF
+        self.comp = Normal
+        self.mix = Categorical
+
+        # neural networks layers
+        self.z_locs = nn.ModuleList(
+            [nn.Linear(input_dim, out_dim) for _ in range(n_components)]
+        )
+        self.z_log_vars = nn.ModuleList(
+            [nn.Linear(input_dim, out_dim) for _ in range(n_components)]
+        )
+        self.z_weights = nn.Linear(input_dim, n_components)
+
+        # prior parameters -> All weights are equal
+        self.prior_weights = nn.Parameter(
+            torch.ones((1, n_components)), requires_grad=not fix_prior
+        )
+
+        means = torch.linspace(-1, 1, steps=n_components + 2)[1:-1].unsqueeze(
+            -1
+        )
+        self.prior_locs = nn.Parameter(
+            means * torch.zeros((1, n_components, out_dim)),
+            requires_grad=not fix_prior,
+        )
+        # fmt: off
+        self.prior_log_vars = nn.Parameter(
+            torch.zeros((1, n_components, out_dim)),
+            requires_grad=not fix_prior
+        )
+        # fmt: on
+
+        self.register_parameter("prior_weights", self.prior_weights)
+        self.register_parameter("prior_locs", self.prior_locs)
+        self.register_parameter("prior_log_vars", self.prior_log_vars)
+
+    def forward(self, hidden: torch.Tensor) -> Distribution:
+        """[summary]
+
+        Args:
+            hidden (torch.Tensor): [description]
+
+        Returns:
+            Distribution: [description]
+        """
+        locs = torch.cat(
+            [
+                self.z_locs[n](hidden).unsqueeze(1)
+                for n in range(self.n_components)
+            ],
+            dim=1,
+        )
+        log_vars = torch.cat(
+            [
+                self.z_log_vars[n](hidden).unsqueeze(1)
+                for n in range(self.n_components)
+            ],
+            dim=1,
+        )
+
+        w = self.z_weights(hidden)
+        scales = (log_vars / 2).exp()
+
+        # logits arg doesn't need to be normalized. Probs have to be
+        return self.dist(
+            self.mix(logits=w), Independent(self.comp(locs, scales), 1)
+        )
+
+    def dist_params(self, p: MixtureSameFamily) -> Tuple:
+        return (
+            p.mixture_distribution.logits,
+            p.component_distribution.base_dist.loc,
+            p.component_distribution.base_dist.scale,
+        )
+
+    def get_posterior(self, dist_params: Tuple) -> MixtureSameFamily:
+        return self.dist(
+            self.mix(logits=dist_params[0]),
+            Independent(self.comp(dist_params[1], dist_params[2]), 1),
+        )
+
+    def get_prior(self, batch_size: int) -> MixtureSameFamily:
+        return self.dist(
+            self.mix(logits=self.prior_weights.expand(batch_size, -1)),
+            Independent(
+                self.comp(
+                    self.prior_locs.expand(batch_size, -1, -1),
+                    (self.prior_log_vars.expand(batch_size, -1, -1) / 2).exp(),
+                ),
+                1,
+            ),
         )

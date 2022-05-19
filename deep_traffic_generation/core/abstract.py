@@ -1,6 +1,7 @@
 # fmt: off
 from argparse import ArgumentParser, Namespace, _ArgumentGroup
 from typing import Dict, Tuple, Union
+from xmlrpc.client import boolean
 
 import numpy as np
 import torch
@@ -8,6 +9,7 @@ import torch.nn as nn
 from pytorch_lightning import LightningModule
 from pytorch_lightning.utilities.types import EPOCH_OUTPUT
 from torch.distributions.distribution import Distribution
+from torch.distributions import Independent, Normal
 from torch.nn import functional as F
 from traffic.core.projection import EuroPP
 
@@ -30,7 +32,7 @@ class LSR(nn.Module):
             Defaults to ``True``.
     """
 
-    def __init__(self, input_dim: int, out_dim: int, fix_prior: bool = True):
+    def __init__(self, input_dim: int, out_dim: int, fix_prior: bool = False):
         super().__init__()
 
         self.input_dim = input_dim
@@ -365,7 +367,7 @@ class VAE(AE):
         .. code:: python
 
             import torch.nn as nn
-            from deep_traffic_generation.core import GaussianMixtureLSR, VAE
+            from deep_traffic_generation.core import NormalLSR, VAE
 
             class YourVAE(VAE):
                 def __init__(self, dataset_params, config):
@@ -375,7 +377,7 @@ class VAE(AE):
                     self.encoder = nn.Linear(64, 32)
 
                     # Example of latent space regularization
-                    self.lsr = GaussianMixtureLSR(
+                    self.lsr = NormalLSR(
                         input_dim=32,
                         out_dim=16
                     )
@@ -402,7 +404,14 @@ class VAE(AE):
     ) -> None:
         super().__init__(dataset_params, config)
 
-        self.scale = nn.Parameter(torch.Tensor([self.hparams.scale]))
+        # Regularization parameter for pseudo inputs
+        self.pseudo_gamma = 0.1
+
+        # Auto balancing between kld and llv with the decoder scale
+        # Diagnosing and Enhancing VAE Models
+        self.scale = nn.Parameter(
+            torch.Tensor([self.hparams.scale]), requires_grad=True
+        )
 
         # Latent Space Regularization
         self.lsr: LSR
@@ -410,6 +419,7 @@ class VAE(AE):
     def forward(self, x) -> Tuple[Tuple, torch.Tensor, torch.Tensor]:
         # encode x to get the location and log variance parameters
         h = self.encoder(x)
+        # When batched, q is a collection of normal posterior
         q = self.lsr(h)
         z = q.rsample()
         # decode z
@@ -428,46 +438,65 @@ class VAE(AE):
             - \\beta \\times \\sum_{i=0}^{N} log(p(x_{i}|z_{i}))
         """
         x, _ = batch
-        batch_size = x.shape[0]
         dist_params, z, x_hat = self.forward(x)
 
         # std of decoder distribution (init at 1)
-        self.scale = nn.Parameter(
-            torch.Tensor([torch.sqrt(F.mse_loss(x, x_hat))]),
-            requires_grad=False,
-        )
-        gamma = self.scale
+        # self.scale = nn.Parameter(
+        #     torch.Tensor([torch.sqrt(F.mse_loss(x, x_hat))]),
+        #     requires_grad=False,
+        # )
+        # gamma = self.scale
 
+        # Regular VAE LOSS
         # log likelihood loss (reconstruction loss)
         llv_loss = -self.gaussian_likelihood(x, x_hat)
         llv_coef = self.hparams.llv_coef
-
         # kullback-leibler divergence (regularization loss)
         q_zx = self.lsr.get_posterior(dist_params)
-        p_z = self.lsr.get_prior(z.size(0))
+        p_z = self.lsr.get_prior()
         kld_loss = self.kl_divergence(z, q_zx, p_z)
         kld_coef = self.hparams.kld_coef
 
-        # ELBO loss from Diagnosing and Enhancing VAE Models
-        # Values are very close, but we can have access to the gamma parameter
-        kl = (
-            torch.sum(self.kl_loss(dist_params[1], dist_params[2])) / batch_size
-        )
-        gen = torch.sum(self.gen_loss(x, x_hat, gamma)) / batch_size
-        elbo = kl + gen
-
         # elbo with beta hyperparameter:
         #   Higher values enforce orthogonality between latent representation.
-        # elbo = kld_coef * kld_loss + llv_coef * llv_loss
-        # elbo = elbo.mean()
+        elbo = kld_coef * kld_loss + llv_coef * llv_loss
+        elbo = elbo.mean()
+
+        # Regularization to make the pseudo-inputs close to their reconstruction
+        if self.hparams.reg_pseudo:
+            # Calculate pseudo-inputs for regularization term
+            pseudo_X = self.lsr.pseudo_inputs_NN(self.lsr.idle_input)
+            pseudo_X = pseudo_X.view(
+                (pseudo_X.shape[0], x.shape[1], x.shape[2])
+            )
+            pseudo_dist_params, pseudo_z, pseudo_x_hat = self.forward(pseudo_X)
+
+            # Regularization term for pseudo_inputs
+            # log likelihood loss (reconstruction loss)
+            pseudo_llv_loss = -self.gaussian_likelihood(pseudo_X, pseudo_x_hat)
+            # kullback-leibler divergence (regularization loss)
+            pseudo_q_zx = self.lsr.get_posterior(pseudo_dist_params)
+            pseudo_kld_loss = self.kl_divergence(pseudo_z, pseudo_q_zx, p_z)
+
+            pseudo_elbo = (
+                kld_coef * pseudo_kld_loss + llv_coef * pseudo_llv_loss
+            )
+            pseudo_elbo = (x.shape[0] / pseudo_X.shape[0]) * pseudo_elbo.mean()
+            elbo = elbo + self.pseudo_gamma * pseudo_elbo
+
+        # ELBO loss from Diagnosing and Enhancing VAE Models
+        # Values are very close, but we can have access to the gamma parameter
+        # kl = (
+        #     torch.sum(self.kl_loss(dist_params[1], dist_params[2])) / batch_size
+        # )
+        # gen = torch.sum(self.gen_loss(x, x_hat, gamma)) / batch_size
+        # elbo = kl + gen
 
         self.log_dict(
             {
                 "train_loss": elbo,
-                # "kl_loss": kld_loss.mean(),
-                # "recon_loss": llv_loss.mean(),
-                "kl_loss": kl,
-                "recon_loss": gen,
+                "kl_loss": kld_loss.mean(),
+                "recon_loss": llv_loss.mean(),
             }
         )
         return elbo
@@ -514,13 +543,15 @@ class VAE(AE):
     ) -> torch.Tensor:
         """Computes Kullback-Leibler divergence :math:`KL(p || q)` between two
         distributions, using Monte Carlo Sampling.
+        Evaluate every z of the batch in its corresponding posterior (1st z with 1st post, etc..)
+        and every z in the prior
 
         Args:
-            z (torch.Tensor): A sample from p.
+            z (torch.Tensor): A sample from p (the posterior).
             p (Distribution): A :class:`~torch.distributions.Distribution`
-                object.
+                object. (the posetrior)
             q (Distribution): A :class:`~torch.distributions.Distribution`
-                object.
+                object. (the prior)
 
         Returns:
             torch.Tensor: A batch of KL divergences of shape `z.size(0)`.
@@ -535,7 +566,6 @@ class VAE(AE):
 
     # The 2 terms here are part of the other formulation of the loss
     # present in Diagnosing and Enhancing VAE Models
-
     def gen_loss(
         self, x: torch.Tensor, x_hat: torch.Tensor, gamma: torch.Tensor
     ):
@@ -606,6 +636,11 @@ class VAE(AE):
         parser.add_argument(
             "--kld_coef", dest="kld_coef", type=float, default=1.0
         )
+
+        parser.add_argument(
+            "--reg_pseudo", dest="reg_pseudo", type=boolean, default=False
+        )
+
         parser.add_argument("--scale", dest="scale", type=float, default=1.0)
         parser.add_argument(
             "--fix-prior", dest="fix_prior", action="store_true"
@@ -614,5 +649,260 @@ class VAE(AE):
             "--no-fix-prior", dest="fix_prior", action="store_false"
         )
         parser.set_defaults(fix_prior=True)
+
+        return parent_parser, parser
+
+
+class HVAE(AE):
+    """Abstract class for a 2 layers Hierarchical VAE.
+    Adaptation of the code presented in VAE with VampPrior
+    PyTorch Implementation
+    https://github.com/jmtomczak/vae_vampprior/blob/master/models/HVAE_2level.py
+    """
+
+    _required_hparams = AE._required_hparams + [
+        "kld_coef",
+        "llv_coef",
+        "scale",
+    ]
+
+    def __init__(
+        self,
+        dataset_params: DatasetParams,
+        config: Union[Dict, Namespace],
+    ) -> None:
+        super().__init__(dataset_params, config)
+
+        # Auto balancing between kld and llv with the decoder scale
+        # Diagnosing and Enhancing VAE Models
+        self.scale = nn.Parameter(
+            torch.Tensor([self.hparams.scale]), requires_grad=True
+        )
+
+        # Latent Space Regularization
+        self.lsr: LSR
+
+        # Distribution q(z1|x,z2)
+        z1_loc_layers = []
+        z1_loc_layers.append(
+            nn.Linear(self.hparams.encoding_dim, self.hparams.encoding_dim)
+        )
+        self.z1_loc_NN = nn.Sequential(*z1_loc_layers)
+
+        z1_log_var_layers = []
+        z1_log_var_layers.append(
+            nn.Linear(self.hparams.encoding_dim, self.hparams.encoding_dim)
+        )
+        z1_log_var_layers.append(nn.Hardtanh(min_val=-6.0, max_val=2.0))
+        self.z1_log_var_NN = nn.Sequential(*z1_log_var_layers)
+
+        # Distribution p(z1|z2)
+        p_z1_layers = []
+        p_z1_layers.extend(
+            [
+                nn.Linear(self.hparams.encoding_dim, 300),
+                nn.ReLU(),
+                nn.Linear(300, 300),
+            ]
+        )
+        # p_z1_layers.append(nn.Sigmoid())
+        self.p_z1_NN = nn.Sequential(*p_z1_layers)
+
+        self.p_z1_loc_NN = nn.Linear(300, self.hparams.encoding_dim)
+
+        p_z1_log_var_layers = []
+        p_z1_log_var_layers.append(nn.Linear(300, self.hparams.encoding_dim))
+        p_z1_log_var_layers.append(nn.Hardtanh(min_val=-6.0, max_val=2.0))
+        self.p_z1_log_var_NN = nn.Sequential(*p_z1_log_var_layers)
+
+    # encoding distribution of z_1
+    def q_z1(self, h1):
+
+        loc_z1 = self.z1_loc_NN(h1)
+        scales_z1 = (self.z1_log_var_NN(h1) / 2).exp()
+
+        return Independent(Normal(loc_z1, scales_z1), 1)
+
+    # decoding distribution of z_1
+    def p_z1(self, z2):
+
+        z2 = self.p_z1_NN(z2)
+        mean = self.p_z1_loc_NN(z2)
+        scales = (self.p_z1_log_var_NN(z2) / 2).exp()
+
+        return mean, scales
+
+    def forward(self, x) -> Tuple[Tuple, torch.Tensor, torch.Tensor]:
+
+        # get z2 : from x to h2 and sampling
+        h2 = self.encoder_z2(x)
+        q2 = self.lsr(h2)
+        z2 = q2.rsample()
+
+        # get z1 : from x and h2 to h1
+        h1_x = self.encoder_z1_x(x)
+        h1_z2 = self.encoder_z1_z2(z2)
+        h1 = torch.cat((h1_x, h1_z2), 1)
+        h1 = self.encoder_z1_joint(h1)
+        q1 = self.q_z1(h1)
+        z1 = q1.rsample()
+
+        # Parameters of P(z1|z2)
+        mean_pz1, scales_pz1 = self.p_z1(z2)
+
+        # decode z
+        x_hat = self.out_activ(self.decoder(torch.cat((z1, z2), 1)))
+        return (
+            self.lsr.dist_params(q2),
+            [q1.base_dist.loc, q1.base_dist.scale],
+            [mean_pz1, scales_pz1],
+            z2,
+            z1,
+            x_hat,
+        )
+
+    def training_step(self, batch, batch_idx):
+        """Training step.
+
+        Computes the gaussian likelihood and the Kullback-Leibler divergence
+        to get the ELBO loss function.
+        The KL divergence part of ELBO is slightly different for HVAE
+
+        """
+        x, _ = batch
+        q_z2_params, q_z1_params, p_z1_params, z2, z1, x_hat = self.forward(x)
+
+        # log likelihood loss (reconstruction loss)
+        llv_loss = -self.gaussian_likelihood(x, x_hat)
+        llv_coef = self.hparams.llv_coef
+
+        # kullback-leibler divergence (regularization loss)
+        q_z2 = self.lsr.get_posterior(q_z2_params)
+        p_z2 = self.lsr.get_prior()
+        q_z1 = Independent(Normal(q_z1_params[0], q_z1_params[1]), 1)
+        p_z1 = Independent(Normal(p_z1_params[0], p_z1_params[1]), 1)
+        kld_loss_z2 = self.kl_divergence(z2, q_z2, p_z2)
+        kld_loss_z1 = self.kl_divergence(z1, q_z1, p_z1)
+        kld_coef = self.hparams.kld_coef
+
+        # elbo with beta hyperparameter:
+        # Higher values enforce orthogonality between latent representation.
+        elbo = kld_coef * (kld_loss_z1 + kld_loss_z2) + llv_coef * llv_loss
+        elbo = elbo.mean()
+
+        self.log_dict(
+            {
+                "train_loss": elbo,
+                "kl_loss": (kld_loss_z1 + kld_loss_z2).mean(),
+                "recon_loss": llv_loss.mean(),
+            }
+        )
+        return elbo
+
+    def validation_step(self, batch, batch_idx):
+        x, _ = batch
+        _, _, _, _, _, x_hat = self.forward(x)
+        loss = F.mse_loss(x_hat, x)
+        self.log("hp/valid_loss", loss)
+
+    def test_step(self, batch, batch_idx):
+        x, info = batch
+        _, _, _, _, _, x_hat = self.forward(x)
+        loss = F.mse_loss(x_hat, x)
+        self.log("hp/test_loss", loss)
+        return x, x_hat, info
+
+    def gaussian_likelihood(self, x: torch.Tensor, x_hat: torch.Tensor):
+        """Computes the gaussian likelihood.
+
+        Args:
+            x (torch.Tensor): input data
+            x_hat (torch.Tensor): mean decoded from :math:`z`.
+
+        .. math::
+
+            \\sum_{i=0}^{N} log(p(x_{i}|z_{i}))
+            \\text{ with } p(.|z_{i})
+            \\sim \\mathcal{N}(\\hat{x_{i}},\\,\\sigma^{2})
+
+        .. note::
+            The scale :math:`\\sigma` can be defined in config and will be
+            accessible with ``self.scale``.
+        """
+        mean = x_hat
+        dist = torch.distributions.Normal(mean, self.scale)
+        # measure prob of seeing trajectory under p(x|z)
+        log_pxz = dist.log_prob(x)
+        dims = [i for i in range(1, len(x.size()))]
+        return log_pxz.sum(dim=dims)
+
+    def kl_divergence(
+        self, z: torch.Tensor, p: Distribution, q: Distribution
+    ) -> torch.Tensor:
+        """Computes Kullback-Leibler divergence :math:`KL(p || q)` between two
+        distributions, using Monte Carlo Sampling.
+        Evaluate every z of the batch in its corresponding posterior (1st z with 1st post, etc..)
+        and every z in the prior
+
+        Args:
+            z (torch.Tensor): A sample from p (the posterior).
+            p (Distribution): A :class:`~torch.distributions.Distribution`
+                object. (the posetrior)
+            q (Distribution): A :class:`~torch.distributions.Distribution`
+                object. (the prior)
+
+        Returns:
+            torch.Tensor: A batch of KL divergences of shape `z.size(0)`.
+
+        .. note::
+            Make sure that the `log_prob()` method of both Distribution
+            objects returns a 1D-tensor with the size of `z` batch size.
+        """
+        log_p = p.log_prob(z)
+        log_q = q.log_prob(z)
+        return log_p - log_q
+
+    @classmethod
+    def add_model_specific_args(
+        cls, parent_parser: ArgumentParser
+    ) -> Tuple[ArgumentParser, _ArgumentGroup]:
+        """Adds VAE arguments to ArgumentParser.
+
+        List of arguments:
+
+            * ``--llv_coef``: Coefficient for the gaussian log likelihood
+              (reconstruction loss): :math:`\\beta`.
+            * ``--kld_coef``: Coefficient for the Kullback-Leibler divergence
+              (regularization loss): :math:`\\alpha`.
+            * ``--scale``: Define the scale :math:`\\sigma` of the Normal law
+              used to sample the reconstruction.
+
+        .. note::
+            It adds also the argument of the inherited class `AE`.
+
+        Args:
+            parent_parser (ArgumentParser): ArgumentParser to update.
+
+        Returns:
+            Tuple[ArgumentParser, _ArgumentGroup]: updated ArgumentParser with
+            TrafficDataset arguments and _ArgumentGroup corresponding to the
+            network.
+        """
+        _, parser = super().add_model_specific_args(parent_parser)
+        parser.add_argument(
+            "--llv_coef",
+            dest="llv_coef",
+            type=float,
+            default=1.0,
+        )
+        parser.add_argument(
+            "--kld_coef", dest="kld_coef", type=float, default=1.0
+        )
+
+        parser.add_argument(
+            "--reg_pseudo", dest="reg_pseudo", type=boolean, default=False
+        )
+
+        parser.add_argument("--scale", dest="scale", type=float, default=1.0)
 
         return parent_parser, parser

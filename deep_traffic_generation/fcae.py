@@ -40,7 +40,8 @@ class FCAE(AE):
             dropout=self.hparams.dropout,
         )
 
-        self.out_activ = nn.Tanh()
+        # self.out_activ = nn.Tanh()
+        self.out_activ = nn.Identity()
 
     @classmethod
     def network_name(cls) -> str:

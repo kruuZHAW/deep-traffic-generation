@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from deep_traffic_generation.core import FCN, VAE, cli_main
 from deep_traffic_generation.core.datasets import DatasetParams, TrafficDataset
-from deep_traffic_generation.core.lsr import GaussianMixtureLSR
+from deep_traffic_generation.core.lsr import NormalLSR
 
 
 # fmt: on
@@ -30,15 +30,14 @@ class FCVAE(VAE):
             input_dim=self.dataset_params["input_dim"],
             out_dim=self.hparams.h_dims[-1],
             h_dims=self.hparams.h_dims[:-1],
+            h_activ=nn.ReLU(),
             dropout=self.hparams.dropout,
         )
 
         # Latent Space Regularization
-        self.lsr = GaussianMixtureLSR(
+        self.lsr = NormalLSR(
             input_dim=self.hparams.h_dims[-1],
             out_dim=self.hparams.encoding_dim,
-            n_components=self.hparams.n_components,
-            fix_prior=self.hparams.fix_prior,
         )
 
         # decoder
@@ -46,10 +45,12 @@ class FCVAE(VAE):
             input_dim=self.hparams.encoding_dim,
             out_dim=self.dataset_params["input_dim"],
             h_dims=self.hparams.h_dims[::-1],
+            h_activ=nn.ReLU(),
             dropout=self.hparams.dropout,
         )
 
-        self.out_activ = nn.Tanh()
+        # self.out_activ = nn.Tanh()
+        self.out_activ = nn.Identity()
 
     @classmethod
     def network_name(cls) -> str:

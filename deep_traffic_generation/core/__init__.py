@@ -8,9 +8,9 @@ from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning.loggers import TensorBoardLogger
 from sklearn.preprocessing import MinMaxScaler
 
-from .abstract import AE, VAE
+from .abstract import AE, VAE, HVAE
 from .datasets import TrafficDataset
-from .lsr import GaussianMixtureLSR
+from .lsr import VampPriorLSR, NormalLSR, ExemplarLSR
 from .networks import FCN, RNN, TCN
 from .utils import get_dataloaders
 

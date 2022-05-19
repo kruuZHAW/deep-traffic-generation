@@ -21,7 +21,7 @@ class TCDecoder(nn.Module):
         kernel_size: int,
         dilation_base: int,
         sampling_factor: int,
-        h_activ: Optional[nn.Module] = None,
+        h_activ: Optional[nn.Module] = nn.ReLU(),
         dropout: float = 0.2,
     ):
         super().__init__()
@@ -90,6 +90,7 @@ class TCAE(AE):
                 h_dims=self.hparams.h_dims[:-1],
                 kernel_size=self.hparams.kernel_size,
                 dilation_base=self.hparams.dilation_base,
+                h_activ=nn.ReLU(),
                 dropout=self.hparams.dropout,
             ),
             nn.AvgPool1d(self.hparams.sampling_factor),
@@ -110,6 +111,7 @@ class TCAE(AE):
 
         # non-linear activations
         self.out_activ = nn.Identity()
+        # self.out_activ = nn.Tanh()
 
     def test_step(self, batch, batch_idx):
         x, info = batch
