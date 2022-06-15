@@ -1,4 +1,5 @@
 from deep_traffic_generation.tcvae import TCVAE
+from deep_traffic_generation.fcvae import FCVAE
 from deep_traffic_generation.core.datasets import TrafficDataset
 
 import torch
@@ -32,11 +33,22 @@ class SingleStageVAE:
     ):
         filenames = next(walk(path + "checkpoints/"), (None, None, []))[2]
 
-        self.VAE = TCVAE.load_from_checkpoint(
-            path + "checkpoints/" + filenames[0],
-            hparams_file=path + "/hparams.yaml",
-            dataset_params=dataset_params,
-        )
+        if path.split("/")[-3] == "tcvae":
+            self.type = "TCVAE"
+            self.VAE = TCVAE.load_from_checkpoint(
+                path + "checkpoints/" + filenames[0],
+                hparams_file=path + "/hparams.yaml",
+                dataset_params=dataset_params,
+            )
+
+        elif path.split("/")[-3] == "fcvae":
+            self.type = "FCVAE"
+            self.VAE = FCVAE.load_from_checkpoint(
+                path + "checkpoints/" + filenames[0],
+                hparams_file=path + "/hparams.yaml",
+                dataset_params=dataset_params,
+            )
+
         self.VAE.eval()
 
     def latent_space(
@@ -58,10 +70,15 @@ class SingleStageVAE:
 
     def decode(self, latent):  # decode some given latent variables
 
-        reco_x = self.VAE.decoder(latent.to(self.VAE.device)).cpu()
-        decoded = reco_x.detach().transpose(1, 2)
-        decoded = decoded.reshape((decoded.shape[0], -1))
-        decoded = self.X.scaler.inverse_transform(decoded)
+        if self.type == "TCVAE":
+            reco_x = self.VAE.decoder(latent.to(self.VAE.device)).cpu()
+            decoded = reco_x.detach().transpose(1, 2)
+            decoded = decoded.reshape((decoded.shape[0], -1))
+            decoded = self.X.scaler.inverse_transform(decoded)
+
+        if self.type == "FCVAE":
+            reco_x = self.VAE.decoder(latent.to(self.VAE.device)).cpu()
+            decoded = self.X.scaler.inverse_transform(reco_x.detach().numpy())
 
         return decoded
 

@@ -60,13 +60,14 @@ class CustomMSF(MixtureSameFamily):
 
 
 class NormalLSR(LSR):
-
-    # def __init__(self, input_dim: int, out_dim: int, fix_prior: bool = True):
     def __init__(self, input_dim: int, out_dim: int):
         super().__init__(input_dim, out_dim)
 
         self.z_loc = nn.Linear(input_dim, out_dim)
-        self.z_log_var = nn.Linear(input_dim, out_dim)
+        z_log_var_layers = []
+        z_log_var_layers.append(nn.Linear(input_dim, out_dim))
+        z_log_var_layers.append(nn.Hardtanh(min_val=-6.0, max_val=2.0))
+        self.z_log_var = nn.Sequential(*z_log_var_layers)
 
         self.out_dim = out_dim
         self.dist = Normal
