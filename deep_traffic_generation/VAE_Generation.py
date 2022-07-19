@@ -72,12 +72,16 @@ class SingleStageVAE:
 
         if self.type == "TCVAE":
             reco_x = self.VAE.decoder(latent.to(self.VAE.device)).cpu()
+            # make sure the first timedelta predicted is 0
+            # reco_x[:, self.VAE.hparams.features.index("timedelta")] = 0
             decoded = reco_x.detach().transpose(1, 2)
             decoded = decoded.reshape((decoded.shape[0], -1))
             decoded = self.X.scaler.inverse_transform(decoded)
 
         if self.type == "FCVAE":
             reco_x = self.VAE.decoder(latent.to(self.VAE.device)).cpu()
+            # make sure the first timedelta predicted is 0
+            # reco_x[:, self.VAE.hparams.features.index("timedelta")] = 0
             decoded = self.X.scaler.inverse_transform(reco_x.detach().numpy())
 
         return decoded
@@ -101,6 +105,10 @@ class SingleStageVAE:
                 z = q.rsample()
 
             gen_x = self.VAE.decoder(z.to(self.VAE.device)).cpu()
+            # make sure the first timedelta predicted is 0
+            # gen_x[:, self.VAE.hparams.features.index("timedelta")] = 0
 
-        gen_x = gen_x.detach().transpose(1, 2).reshape(gen_x.shape[0], -1)
+        if self.type == "TCVAE":
+            gen_x = gen_x.detach().transpose(1, 2).reshape(gen_x.shape[0], -1)
+
         return gen_x, 0
