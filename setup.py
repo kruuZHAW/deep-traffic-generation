@@ -6,9 +6,9 @@ setup(
     name="deep_traffic_generation",
     version="0.0.0",
     description="Description",
-    author="Adrien Lafage",
+    author="Timothé Krauth",
     author_email="",
-    url="https://github.com/alafage",
+    url="https://github.com/kruuZHAW",
     install_requires=[
         "pytorch-lightning",
         "traffic",
