@@ -46,12 +46,32 @@ g_TCAE = Generation(
     scaler=dataset_TCAE.scaler,
 )
 
+# path = "../../deep_traffic_generation/lightning_logs/fcvae/version_0/"
+# t_FCVAE = SingleStageVAE(X=dataset_FCAE, sim_type="generation")
+# t_FCVAE.load(path, dataset_FCAE.parameters)
+# g_FCVAE = Generation(
+#     generation=t_FCVAE,
+#     features=t_FCVAE.VAE.hparams.features,
+#     scaler=dataset_FCAE.scaler,
+# )
+
+# path = "../../deep_traffic_generation/lightning_logs/tcvae/version_1/"
+# t_TCVAE = SingleStageVAE(X=dataset_TCAE, sim_type="generation")
+# t_TCVAE.load(path, dataset_TCAE.parameters)
+# g_TCVAE = Generation(
+#     generation=t_TCVAE,
+#     features=t_TCVAE.VAE.hparams.features,
+#     scaler=dataset_TCAE.scaler,
+# )
+
 # %%
 from traffic.core import Traffic
 
 traffic = Traffic.from_file(
     "../../deep_traffic_generation/data/traffic_noga_tilFAF_train.pkl"
 )
+
+# 4,16,17,19,23,27,31,52,53,58,76,84,98,100,111,116,131
 
 # %%
 
@@ -80,6 +100,28 @@ reconstructed_traf = g_FCAE.build_traffic(
 reconstruction_traf_fcae = traffic[j] + reconstructed_traf
 reconstruction_traf_fcae.to_pickle("reconstruction_fcae.pkl")
 
+# original = dataset_FCAE.data[j].unsqueeze(0)
+# if len(original.shape) >= 3:
+#     original = original.transpose(1, 2).reshape((original.shape[0], -1))
+# original = dataset_FCAE.scaler.inverse_transform(original)
+# original_traf = g_FCVAE.build_traffic(
+#     original,
+#     coordinates=dict(latitude=47.546585, longitude=8.447731),
+#     forward=False,
+# )
+
+# h = t_FCVAE.VAE.encoder(dataset_FCAE.data[j].unsqueeze(0))
+# z = t_FCVAE.VAE.lsr(h).rsample()
+# reconstructed = t_FCVAE.decode(z)
+# reconstructed_traf = g_FCVAE.build_traffic(
+#     reconstructed,
+#     coordinates=dict(latitude=47.546585, longitude=8.447731),
+#     forward=False,
+# )
+
+# reconstruction_traf_fcae = traffic[j] + reconstructed_traf
+# reconstruction_traf_fcae.to_pickle("reconstruction_fcvae.pkl")
+
 # %%
 # Comparison of a trajectory and it's reconstructed counterpart for tcae
 j = 10795
@@ -105,6 +147,28 @@ reconstructed_traf = g_TCAE.build_traffic(
 
 reconstruction_traf_tcae = traffic[j] + reconstructed_traf
 reconstruction_traf_tcae.to_pickle("reconstruction_tcae.pkl")
+
+# original = dataset_TCAE.data[j].unsqueeze(0)
+# if len(original.shape) >= 3:
+#     original = original.transpose(1, 2).reshape((original.shape[0], -1))
+# original = dataset_TCAE.scaler.inverse_transform(original)
+# original_traf = g_TCVAE.build_traffic(
+#     original,
+#     coordinates=dict(latitude=47.546585, longitude=8.447731),
+#     forward=False,
+# )
+
+# h = t_TCVAE.VAE.encoder(dataset_TCAE.data[j].unsqueeze(0))
+# z = t_TCVAE.VAE.lsr(h).rsample()
+# reconstructed = t_TCVAE.decode(z)
+# reconstructed_traf = g_TCVAE.build_traffic(
+#     reconstructed,
+#     coordinates=dict(latitude=47.546585, longitude=8.447731),
+#     forward=False,
+# )
+
+# reconstruction_traf_tcae = traffic[j] + reconstructed_traf
+# reconstruction_traf_tcae.to_pickle("reconstruction_tcvae.pkl")
 
 
 # %%

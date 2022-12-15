@@ -8,14 +8,19 @@ from os import walk
 os.chdir("../../Paper/scripts")
 
 # %%
-with open("traffics_clust_fcae.pkl", "rb") as f:
+# with open("traffics_clust_fcae.pkl", "rb") as f:
+with open("traffics_clust_fcvae.pkl", "rb") as f:
     traffics_fcae = mynewlist = pickle.load(f)
 
-with open("traffics_clust_tcae.pkl", "rb") as f:
+# with open("traffics_clust_tcae.pkl", "rb") as f:
+with open("traffics_clust_tcvae.pkl", "rb") as f:
     traffics_tcae = mynewlist = pickle.load(f)
 
-Z_fcae = pd.read_pickle("Z_clust_fcae.pkl")
-Z_tcae = pd.read_pickle("Z_clust_tcae.pkl")
+# Z_fcae = pd.read_pickle("Z_clust_fcae.pkl")
+# Z_tcae = pd.read_pickle("Z_clust_tcae.pkl")
+
+Z_fcae = pd.read_pickle("Z_clust_fcvae.pkl")
+Z_tcae = pd.read_pickle("Z_clust_tcvae.pkl")
 
 # %%
 from traffic.core.projection import EuroPP
@@ -89,7 +94,8 @@ with plt.style.context("traffic"):
         left=0.125, bottom=0.1, right=0.9, top=0.9, wspace=0, hspace=0.2
     )
 
-fig.savefig("clustering_FCAE.png", transparent=False, dpi=300)
+# fig.savefig("clustering_FCAE.png", transparent=False, dpi=300)
+fig.savefig("clustering_FCVAE.png", transparent=False, dpi=300)
 
 # %%
 from traffic.core.projection import EuroPP
@@ -163,5 +169,6 @@ with plt.style.context("traffic"):
         left=0.125, bottom=0.1, right=0.9, top=0.9, wspace=0, hspace=0.2
     )
 
-fig.savefig("clustering_TCAE.png", transparent=False, dpi=300)
+# fig.savefig("clustering_TCAE.png", transparent=False, dpi=300)
+fig.savefig("clustering_TCVAE.png", transparent=False, dpi=300)
 # %%

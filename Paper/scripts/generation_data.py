@@ -35,12 +35,26 @@ pseudo_h = t_TCVAE.VAE.encoder(pseudo_X)
 pseudo_means = t_TCVAE.VAE.lsr.z_loc(pseudo_h)
 pseudo_scales = (t_TCVAE.VAE.lsr.z_log_var(pseudo_h) / 2).exp()
 
+# # %%
+# for k in range(len(pseudo_means)):
+#     test = t_TCVAE.decode(pseudo_means[k].unsqueeze(0))
+#     test = g_TCVAE.build_traffic(test, coordinates = dict(latitude = 47.546585, longitude = 8.447731), forward=False)
+#     if test[0].shape.is_simple == False:
+#         print(k)
+
+# # %%
+# k = 96
+# test = t_TCVAE.decode(pseudo_means[k].unsqueeze(0))
+# test = g_TCVAE.build_traffic(test, coordinates = dict(latitude = 47.546585, longitude = 8.447731), forward=False)
+# test[0]
+
 # %%
 from sklearn.decomposition import PCA
 from scipy.signal import savgol_filter
 
 # js = [262, 481]
-js = [262, 787]
+# js = [262, 787]
+js = [39, 91]
 n_gen = 100
 
 dist1 = torch.distributions.Independent(

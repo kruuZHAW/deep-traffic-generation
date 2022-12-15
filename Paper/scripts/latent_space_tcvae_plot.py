@@ -6,11 +6,17 @@ import pickle
 from os import walk
 
 # %%
-with open("traffics_clust_tcvae.pkl", "rb") as f:
+# with open("traffics_clust_tcvae.pkl", "rb") as f:
+#     traffics_tcvae = mynewlist = pickle.load(f)
+
+# Z_tcvae_clust = pd.read_pickle("Z_clust_tcvae.pkl")
+# Z_tcvae_gen = pd.read_pickle("Z_gen_tcvae.pkl")
+
+with open("traffics_clust_fcvae.pkl", "rb") as f:
     traffics_tcvae = mynewlist = pickle.load(f)
 
-Z_tcvae_clust = pd.read_pickle("Z_clust_tcvae.pkl")
-Z_tcvae_gen = pd.read_pickle("Z_gen_tcvae.pkl")
+Z_tcvae_clust = pd.read_pickle("Z_clust_fcvae.pkl")
+Z_tcvae_gen = pd.read_pickle("Z_gen_fcvae.pkl")
 
 # %%
 from traffic.core.projection import EuroPP
@@ -24,10 +30,10 @@ with plt.style.context("traffic"):
     ax1 = fig.add_subplot(122, projection=EuroPP())
 
     scat1 = ax0.scatter(Z_tcvae_clust.X1, Z_tcvae_clust.X2, s=4, c=colors_tcvae)
-    ax0.set_title("TCVAE latent space", fontsize=46)
+    ax0.set_title("FCVAE latent space", fontsize=46)
 
     ax1.set_extent((7.5, 9.5, 46.8, 48.3))
-    ax1.set_title("TCVAE reconstructed trajectories", fontsize=46)
+    ax1.set_title("FCVAE reconstructed trajectories", fontsize=46)
     for i, traf in enumerate(traffics_tcvae):
         traf.plot(ax1, alpha=0.2, color=color_cycle[i])
 
@@ -35,7 +41,8 @@ with plt.style.context("traffic"):
         left=0.125, bottom=0.1, right=0.9, top=0.9, wspace=0, hspace=0.35
     )
 
-fig.savefig("clustering_TCVAE.png", transparent=False, dpi=300)
+# fig.savefig("clustering_TCVAE.png", transparent=False, dpi=300)
+fig.savefig("clustering_FCVAE.png", transparent=False, dpi=300)
 
 
 # %%
@@ -60,4 +67,6 @@ with plt.style.context("traffic"):
     legend.legendHandles[0]._sizes = [100]
     legend.legendHandles[1]._sizes = [100]
 
-fig.savefig("generation_latent_space_TCVAE.png", transparent=False, dpi=300)
+# fig.savefig("generation_latent_space_TCVAE.png", transparent=False, dpi=300)
+
+# %%

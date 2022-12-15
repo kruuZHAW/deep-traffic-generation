@@ -15,7 +15,7 @@ from traffic.core.projection import EuroPP
 from traffic.data import airports
 
 with plt.style.context("traffic"):
-    fig = plt.figure(figsize=(15, 12))
+    fig = plt.figure(figsize=(17, 12))
     ax0 = fig.add_subplot(221)
     ax1 = fig.add_subplot(222, projection=EuroPP())
 
@@ -62,7 +62,7 @@ with plt.style.context("traffic"):
     legend.legendHandles[1]._sizes = [50]
     legend.legendHandles[2]._sizes = [50]
 
-    ax1.set_title("Generated synthetic trajectories", pad=100, fontsize=18)
+    ax1.set_title("Generated synthetic trajectories", pad=0, fontsize=18)
 
     traf_gen_1.plot(ax1, alpha=0.2, color="#9ecae9")
     traf_gen_1["TRAJ_0"].plot(ax1, color="#4c78a8", lw=2)
@@ -82,13 +82,13 @@ with plt.style.context("traffic"):
         text_kw={"s": None},
     )
 
-    airports["LSZH"].point.plot(ax1)
+    # airports["LSZH"].point.plot(ax1)
     fig.tight_layout()
-    # plt.subplots_adjust(
-    #     left=0.125, bottom=0.1, right=0.9, top=0.9, wspace=0, hspace=0
-    # )
+    plt.subplots_adjust(
+        left=0.125, bottom=0.1, right=0.9, top=0.9, wspace=0, hspace=0
+    )
 
-fig.savefig("generation.png", transparent=False, dpi=300)
+fig.savefig("generation_bad.png", transparent=False, dpi=300)
 
 # %%
 import altair as alt
