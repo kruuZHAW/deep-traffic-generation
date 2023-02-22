@@ -30,7 +30,7 @@ conda create -n traffic -c conda-forge python=3.9 traffic
 conda activate traffic
 
 # clone project   
-git clone https://github.com/alafage/deep-traffic-generation
+git clone https://github.com/kruuZHAW/deep-traffic-generation
 
 # install project
 cd deep-traffic-generation
