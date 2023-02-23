@@ -53,14 +53,4 @@ You can use Tensorboard to visualize training logs.
 
 ```bash
 tensorboard --logdir lightning_logs
-```
-
-## Documentation
-
-Is provided along this project a documentation generated using [Sphinx](https://www.sphinx-doc.org). Here the commands to generate it. Navigate to the `docs` folder and do:
-
-```bash
-make html
-# or
-sphinx-build -b html source build
-```
+``
