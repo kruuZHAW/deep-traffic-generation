@@ -43,10 +43,8 @@ pip install .
 # module folder
 cd deep_traffic_generation
 
-# example: run module with default arguments
-python linear_ae.py
 # example: run module with custom arguments
-python linear_ae.py --gpus 1 --early_stop 10 --max_epochs 200 --lr 0.001
+python tcvae.py --data_path *path to data* --prior vampprior --encoding_dim 32 --h_dims 64 64 64 --lr 0.001 --batch_size 100 --n_components 200 --features track groundspeed altitude timedelta --info_features latitude longitude --info_index -1
 ```
 
 You can use Tensorboard to visualize training logs.
