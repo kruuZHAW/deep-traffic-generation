@@ -53,4 +53,4 @@ You can use Tensorboard to visualize training logs.
 
 ```bash
 tensorboard --logdir lightning_logs
-``
+```
